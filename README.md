@@ -37,4 +37,55 @@ A powerful **AI-powered multimodal Streamlit application** that allows users to 
 ---
 
 ## 📁 Project Structure
+youtube-gemini-chat/
+├── app.py # Streamlit UI + main logic
+├── services/
+│ ├── youtube.py # YouTube transcript API
+│ ├── video.py # Frame extraction
+│ └── assembly_ai.py # AssemblyAI integration
+├── frames/ # Auto-saved visual frames
+├── uploads/ # User-uploaded video files
+├── requirements.txt # All Python dependencies
+├── .gitignore # Prevents uploads/ & .env from being tracked
+└── .env # Your API keys (keep private)
 
+---
+
+## 📦 Setup & Installation
+
+### 🔹 Clone the Repository
+
+```bash
+git clone https://github.com/yourusername/youtube-gemini-chat.git
+cd youtube-gemini-chat
+
+🔹 Install Python Requirements
+pip install -r requirements.txt
+
+🔹 Create a .env File
+
+Inside the project root:
+
+ASSEMBLYAI_API_KEY=your_assemblyai_key
+GOOGLE_API_KEY=your_google_gemini_or_openai_key
+💡 Usage
+🔹 Start the App
+streamlit run app.py
+
+App will run on: http://localhost:8501
+
+🔹 Upload a file or paste a YouTube link
+
+The app will:
+
+Transcribe the audio via AssemblyAI
+
+Extract visual frames using OpenCV
+
+Generate image embeddings using CLIP
+
+Let you ask natural language questions about the video content
+
+👩‍💻 Author
+
+Made with ❤️ by Varsha Salimath
