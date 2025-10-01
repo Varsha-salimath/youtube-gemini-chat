@@ -125,7 +125,56 @@ Open your browser at: [http://localhost:8501](http://localhost:8501)
 
 Here’s a visual flow of the backend:
 
-![Flowchart](https://github.com/Varsha-salimath/youtube-gemini-chat/assets/your-diagram-path.png)
+[ YouTube Link / Video Upload ]
+              |
+              v
+   ┌──────────────────────────┐
+   |   Audio Transcription    | ←── (AssemblyAI API)
+   └──────────────────────────┘
+              |
+              v
+   ┌──────────────────────────┐
+   |  Transcript Chunking     |
+   └──────────────────────────┘
+              |
+              v
+   ┌──────────────────────────┐
+   | Text Embeddings (Gemini) |
+   └──────────────────────────┘
+
+Meanwhile...
+              |
+              ↓
+   ┌──────────────────────────┐
+   | Frame Extraction (OpenCV)|
+   └──────────────────────────┘
+              |
+              v
+   ┌──────────────────────────┐
+   | Image Embeddings (CLIP)  |
+   └──────────────────────────┘
+
+              ↓
+     [ Store Everything in RAM / DB ]
+
+              ↓
+   ┌──────────────────────────────┐
+   |  User Asks a Question        |
+   └──────────────────────────────┘
+              |
+              v
+   ┌──────────────────────────┐
+   | Find Relevant Text & Img |
+   └──────────────────────────┘
+              |
+              v
+   ┌──────────────────────────────┐
+   | Answer with Gemini + Visuals |
+   └──────────────────────────────┘
+              |
+              v
+      [ Response + Screenshots ]
+
 
 ---
 
