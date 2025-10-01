@@ -121,35 +121,6 @@ Open your browser at: [http://localhost:8501](http://localhost:8501)
 
 ---
 
-Here is the **exact section** you can copy-paste into your `README.md` to include the backend flow diagram in text format:
-
----
-
-```markdown
-## 🧪 Sample Diagram
-
-Here’s a visual flow of the backend:
-
-```
-
-[ YouTube Link / Video Upload ] ↓ _______________________________________________ | Audio Transcription | ←── (AssemblyAI API)
-↓ ________________________________________ | Transcript Chunking |
-↓ ____________________________________ | Text Embeddings (Gemini) |
-
-Meanwhile… ↓ _____________________________________________ | Frame Extraction (OpenCV) | ↓
-↓ _________________________________ | Image Embeddings (CLIP) |
-
-```
-                     ↓
-         [ Store Everything in RAM / DB ]
-                     ↓
-```
-
-__________________________________________________________ | User Asks a Question | ↓
-__________________________________________________________ | Find Relevant Text & Img | ↓
-__________________________________________________________ | Answer with Gemini + Visuals | → [ Response + Screenshots ]
-
-```
 
 ---
 
@@ -164,7 +135,8 @@ __________________________________________________________ | Answer with Gemini 
 
 ## 🧙‍♀️ Creator
 
-> Made with 💡, 🍵, and a lot of `cv2.imwrite()` by
+> Made with 💡 by
+## 
 > **🚀 Varsha Salimath**
 > *Because your videos deserve conversations too.*
 
