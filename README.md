@@ -35,57 +35,113 @@ A powerful **AI-powered multimodal Streamlit application** that allows users to 
 <img width="1536" height="1024" alt="ChatGPT Image Oct 2, 2025, 02_50_49 AM" src="https://github.com/user-attachments/assets/2fe86d2c-bb95-4e71-ab77-088f258efae5" />
 
 ---
+````markdown
+# 🎬 YouTube-Gemini Chat: Multi-Modal Video Understanding with Streamlit
 
-## 📁 Project Structure
-youtube-gemini-chat/
-├── app.py # Streamlit UI + main logic
-├── services/
-│ ├── youtube.py # YouTube transcript API
-│ ├── video.py # Frame extraction
-│ └── assembly_ai.py # AssemblyAI integration
-├── frames/ # Auto-saved visual frames
-├── uploads/ # User-uploaded video files
-├── requirements.txt # All Python dependencies
-├── .gitignore # Prevents uploads/ & .env from being tracked
-└── .env # Your API keys (keep private)
+An interactive Streamlit app that allows users to upload or link a YouTube video, then ask questions about it using both audio and visual context. This app integrates transcription, frame extraction, image embeddings, and natural language understanding to enable conversational search over video content.
 
 ---
 
-## 📦 Setup & Installation
+## 🧠 How It Works
 
-### 🔹 Clone the Repository
+📺 **Input Video** → 🎧 **Audio Transcription (AssemblyAI)** + 🖼️ **Frame Extraction (OpenCV)**  
+➡️ ✨ **Image Embeddings (CLIP)** + 🧠 **Gemini-based QA over transcript & visuals**  
+➡️ 💬 **Answer your questions in natural language**
+
+---
+
+## 📁 Project Structure
+
+```text
+youtube-gemini-chat/
+├── app.py              # Streamlit UI + main logic
+├── services/           # Core logic modules
+│   ├── youtube.py      # YouTube transcript API
+│   ├── assembly_ai.py  # AssemblyAI transcription
+│   ├── video.py        # Frame extraction & video utils
+├── frames/             # Auto-saved visual frames
+├── uploads/            # User-uploaded video/audio
+├── .env                # API keys (DO NOT SHARE)
+├── .gitignore          # Prevents uploads & secrets from being committed
+├── requirements.txt    # All dependencies
+````
+
+---
+
+## ⚙️ Setup & Installation
+
+### 🔁 Clone the Repository
 
 ```bash
-git clone https://github.com/yourusername/youtube-gemini-chat.git
+git clone https://github.com/Varsha-salimath/youtube-gemini-chat.git
 cd youtube-gemini-chat
+```
 
-🔹 Install Python Requirements
+### 📦 Install Dependencies
+
+```bash
 pip install -r requirements.txt
+```
 
-🔹 Create a .env File
+### 🔑 Create a `.env` File
 
-Inside the project root:
+Inside your project folder:
 
+```env
 ASSEMBLYAI_API_KEY=your_assemblyai_key
 GOOGLE_API_KEY=your_google_gemini_or_openai_key
-💡 Usage
-🔹 Start the App
+```
+
+---
+
+## 🚀 Run the App
+
+```bash
 streamlit run app.py
+```
 
-App will run on: http://localhost:8501
+Open your browser at: [http://localhost:8501](http://localhost:8501)
 
-🔹 Upload a file or paste a YouTube link
+---
 
-The app will:
+## 🎥 Usage Flow
 
-Transcribe the audio via AssemblyAI
+1. Upload a video/audio file or paste a YouTube link.
+2. App will:
 
-Extract visual frames using OpenCV
+   * Transcribe audio via **AssemblyAI**
+   * Extract visual frames using **OpenCV**
+   * Generate embeddings using **CLIP**
+   * Use **Gemini/OpenAI** to answer your questions
+3. Ask questions like:
 
-Generate image embeddings using CLIP
+   * "What is this video about?"
+   * "What’s happening around 2:30 mark visually?"
+   * "Summarize the key discussion"
 
-Let you ask natural language questions about the video content
+---
 
-👩‍💻 Author
+## 🧪 Sample Diagram
 
-Made with ❤️ by Varsha Salimath
+Here’s a visual flow of the backend:
+
+![Flowchart](https://github.com/Varsha-salimath/youtube-gemini-chat/assets/your-diagram-path.png)
+
+---
+
+## 🌍 Deploy on Streamlit Cloud
+
+1. Push your project to GitHub (excluding `uploads/` and `.env`)
+2. Go to [streamlit.io/cloud](https://streamlit.io/cloud) → Click “New App”
+3. Connect GitHub → Select repo → Click Deploy
+4. Done! App will be accessible globally.
+
+---
+
+## 🧙‍♀️ Creator
+
+> Made with 💡, 🍵, and a lot of `cv2.imwrite()` by
+> **🚀 Varsha Salimath**
+> *Because your videos deserve conversations too.*
+
+---
