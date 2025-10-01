@@ -1,0 +1,10 @@
+streamlit
+python-dotenv
+google-generativeai
+sentence-transformers
+torch
+torchvision
+pillow
+opencv-python
+yt-dlp
+assemblyai
