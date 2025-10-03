@@ -5,7 +5,6 @@
 # - Screenshot preview for each retrieved chunk timestamp
 
 from __future__ import annotations
-
 import os, math, socket, mimetypes, re
 from pathlib import Path
 from typing import List, Tuple
@@ -28,7 +27,7 @@ _force_ipv4_only()
 # ---- Project services ----
 from services.youtube import parse_video_id, fetch_transcript_for_video
 from services.assembly_ai import transcribe_with_assemblyai
-from services.video import try_download_youtube_mp4, extract_frames  # you already have these
+from services.video import try_download_youtube_mp4, extract_frames
 
 # ---- Configure Gemini ----
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
@@ -40,23 +39,19 @@ genai.configure(api_key=GOOGLE_API_KEY)
 # -------------------- UI --------------------
 st.set_page_config(page_title="YouTube Chat (Gemini)", page_icon="📺", layout="wide")
 
-st.markdown(
-    """
-    <style>
-    /* simple, clean header */
-    .app-title { font-size: 28px; font-weight: 700; margin-bottom: 2px; }
-    .app-sub   { color:#666; margin-bottom: 18px; }
-    .chunk-badge { background:#eef2ff; color:#334155; padding:2px 8px; border-radius:999px; font-size:12px; margin-right:6px;}
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+st.markdown("""
+<style>
+.app-title { font-size: 28px; font-weight: 700; margin-bottom: 2px; }
+.app-sub   { color:#666; margin-bottom: 18px; }
+.chunk-badge { background:#eef2ff; color:#334155; padding:2px 8px; border-radius:999px; font-size:12px; margin-right:6px;}
+</style>
+""", unsafe_allow_html=True)
+
 st.markdown('<div class="app-title">📺 Chat with YouTube Video</div>', unsafe_allow_html=True)
 st.markdown('<div class="app-sub">Use YouTube captions when available. Otherwise upload audio/video and we’ll transcribe with AssemblyAI. Supports screenshots as visual evidence.</div>', unsafe_allow_html=True)
 
-# ====================== Embedding helpers (robust to SDK shape) =====================
+# ====================== Embedding helpers =====================
 def _extract_embedding(resp):
-    """Normalize all known response shapes from google-generativeai."""
     if resp is None:
         raise ValueError("Empty embedding response")
     if isinstance(resp, dict):
@@ -85,6 +80,9 @@ def _extract_embedding(resp):
     raise ValueError(f"Unexpected embedding response type: {type(resp)}")
 
 def embed_one(text: str) -> List[float]:
+    """Safe embed one string (skip empty)."""
+    if not text or not text.strip():
+        return []  # skip empty text
     try:
         r = genai.embed_content(model="models/text-embedding-004", content=text)
     except Exception:
@@ -92,7 +90,9 @@ def embed_one(text: str) -> List[float]:
     return _extract_embedding(r)
 
 def embed_texts(texts: List[str]) -> List[List[float]]:
-    return [embed_one(t) for t in texts]
+    """Filter empty strings before embedding."""
+    clean = [t for t in texts if t and t.strip()]
+    return [embed_one(t) for t in clean]
 
 # ========================== Chat model selection ===================================
 def _list_chat_models() -> set[str]:
@@ -105,13 +105,8 @@ def _list_chat_models() -> set[str]:
 
 def pick_chat_model():
     preference = [
-        "models/gemini-1.5-flash",
-        "gemini-1.5-flash",
-        "models/gemini-1.5-flash-8b",
-        "gemini-1.5-flash-8b",
-        "models/gemini-1.0-pro",
-        "gemini-1.0-pro",
-    ]
+        "models/gemini-1.5-flash","gemini-1.5-flash","models/gemini-1.5-flash-8b","gemini-1.5-flash-8b",
+        "models/gemini-1.0-pro","gemini-1.0-pro"]
     available = _list_chat_models()
     for cand in preference:
         if cand in available:
@@ -123,8 +118,7 @@ def pick_chat_model():
 # ============================== Visual embeddings (CLIP) ============================
 @st.cache_resource(show_spinner=False)
 def get_clip_model():
-    # Lazy import avoids NameError and speeds cold-starts if visuals unused
-    from sentence_transformers import SentenceTransformer  # <-- fixes your NameError
+    from sentence_transformers import SentenceTransformer
     return SentenceTransformer("clip-ViT-B-32")
 
 def embed_image_file(path: str) -> List[float]:
@@ -153,55 +147,51 @@ def chunk_transcript(items: List[Tuple[str, str]], max_chars: int = 600) -> List
     return chunks
 
 def cosine(u: List[float], v: List[float]) -> float:
-    dot = sum(a*b for a, b in zip(u, v))
+    dot = sum(a*b for a,b in zip(u,v))
     nu = math.sqrt(sum(a*a for a in u)) + 1e-8
     nv = math.sqrt(sum(b*b for b in v)) + 1e-8
     return dot/(nu*nv)
 
 def retrieve(qv: List[float], embs: List[List[float]], top_k: int = 4):
-    scored = sorted(((i, cosine(qv, e)) for i, e in enumerate(embs)), key=lambda x: x[1], reverse=True)
-    return [i for i, _ in scored[:top_k]]
+    scored = sorted(((i,cosine(qv,e)) for i,e in enumerate(embs) if e), key=lambda x:x[1], reverse=True)
+    return [i for i,_ in scored[:top_k]]
 
 # -------------- timestamp helpers + frame matching ---------------------------------
-_TS_RE = re.compile(r"^(?:(\d+):)?([0-5]?\d):([0-5]?\d)$")  # HH:MM:SS or M:SS
+_TS_RE = re.compile(r"^(?:(\d+):)?([0-5]?\d):([0-5]?\d)$")
 
 def ts_to_seconds(ts: str) -> float:
     ts = ts.strip()
     m = _TS_RE.match(ts)
-    if not m:
-        return 0.0
+    if not m: return 0.0
     h = int(m.group(1) or 0)
     mm = int(m.group(2) or 0)
     ss = int(m.group(3) or 0)
-    return float(h*3600 + mm*60 + ss)
+    return float(h*3600+mm*60+ss)
 
 def nearest_frame_for_ts(ts: str, frames: list[tuple[str,str]]) -> tuple[str,str] | None:
-    """frames: [(timestamp_str, image_path)], return best match (ts,path)."""
-    if not frames: 
-        return None
+    if not frames: return None
     target = ts_to_seconds(ts)
-    best = None
-    best_delta = 1e9
-    for fts, p in frames:
-        delta = abs(ts_to_seconds(fts) - target)
-        if delta < best_delta:
-            best_delta = delta
-            best = (fts, p)
+    best, best_delta = None, 1e9
+    for fts,p in frames:
+        delta = abs(ts_to_seconds(fts)-target)
+        if delta<best_delta:
+            best_delta=delta; best=(fts,p)
     return best
 
 # =========================== Visual index builder ===================================
 def build_visual_index_from_video(video_path: str, every_sec: float = 2.0):
     frames = extract_frames(video_path, outdir="frames", every_sec=every_sec, max_frames=240)
     if not frames:
-        st.warning("Could not extract frames from the video.")
-        return
+        st.warning("Could not extract frames from the video."); return
     embs = []
     with st.spinner(f"Embedding {len(frames)} frames with CLIP..."):
-        for _, p in frames:
-            embs.append(embed_image_file(p))
-    st.session_state.vis_frames = frames      # [(ts, path)]
-    st.session_state.vis_embs = embs          # [vector]
-    st.toast(f"Indexed {len(frames)} visual frames.", icon="✅")
+        for _,p in frames: embs.append(embed_image_file(p))
+    st.session_state.vis_frames=frames
+    st.session_state.vis_embs=embs
+    st.toast(f"Indexed {len(frames)} visual frames.",icon="✅")
+
+# (rest of your code stays exactly as you wrote, no changes needed below this point)
+
 
 # =============================== App state =========================================
 if "idx_chunks" not in st.session_state:
