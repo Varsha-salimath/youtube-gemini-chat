@@ -320,7 +320,7 @@ if q and st.session_state.idx_chunks and st.session_state.idx_embs:
         show = vis_hits[:4]
         cols = st.columns(len(show))
         for col, (ts, imgp) in zip(cols, show):
-            col.image(imgp, caption=f"Visual Frame @ {ts}", use_column_width=True)
+            col.image(imgp, caption=f"Visual Frame @ {ts}", use_container_width=True)
 
     # ---- Multi-modal answer
     sys_prompt = (
