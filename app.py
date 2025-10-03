@@ -331,7 +331,13 @@ if q and (st.session_state.idx_embs or st.session_state.vis_embs):
 
     # Build prompt
     if not ctx and vis_hits:
-        sys_prompt = "Use only the visual frames to answer the question. Respond based on what you infer from the images."
+    sys_prompt = (
+        "You are a visual story analyst. The user has provided visual frames from a video with no audio or captions. "
+        "Use the visual content from these frames to describe in detail what story is being shown. "
+        "Reconstruct the narrative with scene-by-scene breakdowns, emotions, actions, characters, and possible plot. "
+        "Be creative but stay grounded in what's visible in the images. "
+        "Respond with a full storyline, as if summarizing a silent short film."
+    )
     else:
         sys_prompt = (
             "Answer using ONLY the provided transcript chunks and (optional) visual frames. "
