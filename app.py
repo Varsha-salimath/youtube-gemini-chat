@@ -190,18 +190,15 @@ def build_visual_index_from_video(video_path: str, every_sec: float = 2.0):
     st.session_state.vis_embs=embs
     st.toast(f"Indexed {len(frames)} visual frames.",icon="✅")
 
-# (rest of your code stays exactly as you wrote, no changes needed below this point)
-
-
 # =============================== App state =========================================
 if "idx_chunks" not in st.session_state:
-    st.session_state.idx_chunks = []          # [(ts, text)]
-    st.session_state.idx_embs = []            # [vector]
+    st.session_state.idx_chunks = []
+    st.session_state.idx_embs = []
     st.session_state.source = ""
 
 if "vis_frames" not in st.session_state:
-    st.session_state.vis_frames = []          # [(ts, img_path)]
-    st.session_state.vis_embs = []            # [vector]
+    st.session_state.vis_frames = []
+    st.session_state.vis_embs = []
 
 # ================================== UI Tabs ========================================
 yt_tab, upload_tab = st.tabs(["🔗 YouTube link", "📤 Upload (AssemblyAI)"])
@@ -221,7 +218,7 @@ with yt_tab:
             st.error(str(e)); st.stop()
 
         with st.spinner("Fetching captions..."):
-            items = fetch_transcript_for_video(vid)  # [(ts, text)] or []
+            items = fetch_transcript_for_video(vid)
         if not items:
             st.warning("No captions found or access blocked. Use the Upload tab to transcribe with AssemblyAI.")
         else:
@@ -251,20 +248,44 @@ with upload_tab:
         os.makedirs("uploads", exist_ok=True)
         path = os.path.join("uploads", up.name)
         with open(path, "wb") as f: f.write(up.read())
+        st.success("File saved. Starting transcription...")
+
         with st.spinner("Transcribing with AssemblyAI..."):
-            items = transcribe_with_assemblyai(path)
+            try:
+                items = transcribe_with_assemblyai(path)
+                if not items:
+                    st.error("No transcript items returned from AssemblyAI.")
+                    st.stop()
+            except Exception as e:
+                st.exception(f"Transcription failed: {e}")
+                st.stop()
+
         with st.spinner("Chunking + embedding..."):
-            chunks = chunk_transcript(items)
-            texts = [c[1] for c in chunks]
-            embs = embed_texts(texts)
-            st.session_state.idx_chunks = chunks
-            st.session_state.idx_embs = embs
-            st.session_state.source = f"Upload:{up.name}"
-        st.success(f"Indexed {len(chunks)} chunks from uploaded file.")
+            try:
+                chunks = chunk_transcript(items)
+                if not chunks:
+                    st.error("Chunking returned no results.")
+                    st.stop()
+                texts = [c[1] for c in chunks]
+                embs = embed_texts(texts)
+                if not embs or not any(embs):
+                    st.error("Embedding failed or returned empty vectors.")
+                    st.stop()
+                st.session_state.idx_chunks = chunks
+                st.session_state.idx_embs = embs
+                st.session_state.source = f"Upload:{up.name}"
+                st.success(f"Indexed {len(chunks)} chunks from uploaded file.")
+            except Exception as e:
+                st.exception(f"Error during chunking or embedding: {e}")
+                st.stop()
 
         ext = (up.name.rsplit(".", 1)[-1] or "").lower()
         if ext in {"mp4", "mkv", "mov"}:
             build_visual_index_from_video(path, every_sec=2.0)
+
+# Debug info (temporary)
+st.write("DEBUG idx_chunks:", len(st.session_state.idx_chunks))
+st.write("DEBUG idx_embs:", len(st.session_state.idx_embs))
 
 # Small status chips
 c1, c2, c3 = st.columns(3)
@@ -279,7 +300,6 @@ q = st.text_input("Your question")
 
 if q and st.session_state.idx_chunks and st.session_state.idx_embs:
     with st.spinner("Searching + answering..."):
-        # ---- Text retrieval
         qv = embed_one(q)
         top_idx = retrieve(qv, st.session_state.idx_embs, top_k=4)
         ctx = "\n\n".join(
@@ -287,9 +307,7 @@ if q and st.session_state.idx_chunks and st.session_state.idx_embs:
             for i in top_idx
         )
 
-        # ---- Visual retrieval: (1) by semantic similarity, (2) by exact chunk timestamps
         vis_hits: list[tuple[str,str]] = []
-        # (1) semantic
         if st.session_state.vis_embs:
             try:
                 qv_vis = embed_text_mm(q)
@@ -297,21 +315,19 @@ if q and st.session_state.idx_chunks and st.session_state.idx_embs:
                 vis_hits.extend([st.session_state.vis_frames[i] for i in vis_ids])
             except Exception:
                 pass
-        # (2) timestamp-aligned frames for each retrieved chunk
         for i in top_idx:
             ts = st.session_state.idx_chunks[i][0]
             m = nearest_frame_for_ts(ts, st.session_state.vis_frames)
             if m and m not in vis_hits:
                 vis_hits.append(m)
 
-    # ---- Visual evidence preview (up to 4 images)
     if vis_hits:
         st.caption("Visual evidence:")
         show = vis_hits[:4]
         cols = st.columns(len(show))
         for col, (ts, imgp) in zip(cols, show):
             col.image(imgp, caption=f"Visual Frame @ {ts}", use_container_width=True)
-    # ---- Multi-modal answer
+
     sys_prompt = (
         "Answer using ONLY the provided transcript chunks and (optional) visual frames. "
         "If the answer isn't present, say: 'I don’t know based on the transcript and video visuals.' "
@@ -319,7 +335,6 @@ if q and st.session_state.idx_chunks and st.session_state.idx_embs:
     )
 
     parts = [f"System instruction: {sys_prompt}", f"Context:\n{ctx}", f"Question: {q}"]
-    # inject images if we have any
     if vis_hits:
         image_parts = []
         for ts, imgp in vis_hits[:2]:
@@ -333,7 +348,6 @@ if q and st.session_state.idx_chunks and st.session_state.idx_embs:
     resp = model.generate_content([{"role": "user", "parts": parts}])
     st.write(resp.text.strip() if hasattr(resp, "text") and resp.text else str(resp))
 
-    # Evidence footer
     text_evidence = ", ".join(f"Chunk {i+1} @ {st.session_state.idx_chunks[i][0]}" for i in top_idx)
     vis_evidence = ", ".join(f"Visual Frame @ {ts}" for ts, _ in vis_hits) if vis_hits else "None"
     st.markdown(f"**Evidence**  \nText: {text_evidence}  \nVisual: {vis_evidence}")
