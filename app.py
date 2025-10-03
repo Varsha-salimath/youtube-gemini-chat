@@ -1,9 +1,10 @@
+
 # app.py — Multi-modal YouTube/Upload QA with text + visual evidence
 # - Text embeddings: Google text-embedding-004
 # - Visual embeddings: CLIP (sentence-transformers "clip-ViT-B-32")
 # - Transcription fallback: AssemblyAI
 # - Screenshot preview for each retrieved chunk timestamp
-# - NEW: Handles silent videos by using only visual embeddings
+# - Enhanced: Handles silent videos with image-only storytelling
 
 from __future__ import annotations
 
@@ -17,7 +18,7 @@ import requests.packages.urllib3.util.connection as urllib3_cn
 import google.generativeai as genai
 from PIL import Image
 import numpy as np
-import moviepy.editor as mp  # for audio detection
+import moviepy.editor as mp
 
 # ---- Load .env FIRST so service modules can see keys ----
 load_dotenv(dotenv_path=Path(__file__).with_name(".env"), override=True)
@@ -30,109 +31,65 @@ _force_ipv4_only()
 # ---- Project services ----
 from services.youtube import parse_video_id, fetch_transcript_for_video
 from services.assembly_ai import transcribe_with_assemblyai
-from services.video import try_download_youtube_mp4, extract_frames  # you already have these
+from services.video import try_download_youtube_mp4, extract_frames
 
-# ---- Configure Gemini ----
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
 if not GOOGLE_API_KEY:
     st.error("GOOGLE_API_KEY missing in .env")
     st.stop()
 genai.configure(api_key=GOOGLE_API_KEY)
 
-# -------------------- UI --------------------
-st.set_page_config(page_title="YouTube Chat (Gemini)", page_icon="📺", layout="wide")
+st.set_page_config(page_title="YouTube Chat (Gemini)", page_icon="📻", layout="wide")
 
-st.markdown(
-    """
-    <style>
-    .app-title { font-size: 28px; font-weight: 700; margin-bottom: 2px; }
-    .app-sub   { color:#666; margin-bottom: 18px; }
-    .chunk-badge { background:#eef2ff; color:#334155; padding:2px 8px; border-radius:999px; font-size:12px; margin-right:6px;}
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-st.markdown('<div class="app-title">📺 Chat with YouTube Video</div>', unsafe_allow_html=True)
+st.markdown("""
+<style>
+.app-title { font-size: 28px; font-weight: 700; margin-bottom: 2px; }
+.app-sub   { color:#666; margin-bottom: 18px; }
+.chunk-badge { background:#eef2ff; color:#334155; padding:2px 8px; border-radius:999px; font-size:12px; margin-right:6px;}
+</style>
+""", unsafe_allow_html=True)
+
+st.markdown('<div class="app-title">📻 Chat with YouTube Video</div>', unsafe_allow_html=True)
 st.markdown('<div class="app-sub">Use YouTube captions when available. Otherwise upload audio/video and we’ll transcribe with AssemblyAI. Supports screenshots as visual evidence.</div>', unsafe_allow_html=True)
 
 # ====================== Helpers =====================
 def has_audio(file_path: str) -> bool:
-    """Detect if uploaded video has audio track."""
     try:
         clip = mp.VideoFileClip(file_path)
         return clip.audio is not None
     except Exception:
         return False
 
-# ====================== Embedding helpers =====================
+# ================= Embedding =====================
 def _extract_embedding(resp):
-    if resp is None:
+    if not resp:
         raise ValueError("Empty embedding response")
     if isinstance(resp, dict):
         if "embedding" in resp:
             emb = resp["embedding"]
-            if isinstance(emb, dict) and "values" in emb:
-                return emb["values"]
-            return emb
-        if "embeddings" in resp and resp["embeddings"]:
-            emb0 = resp["embeddings"][0]
-            if isinstance(emb0, dict) and "values" in emb0:
-                return emb0["values"]
-            if isinstance(emb0, dict) and "embedding" in emb0:
-                return emb0["embedding"]
-            return emb0
+            return emb.get("values") if isinstance(emb, dict) else emb
+        if "embeddings" in resp:
+            e = resp["embeddings"][0]
+            return e.get("values") or e.get("embedding") or e
     if hasattr(resp, "embedding"):
         e = resp.embedding
-        if hasattr(e, "values"):
-            return e.values
-        return e
+        return getattr(e, "values", e)
     if isinstance(resp, list) and resp:
         e0 = resp[0]
-        if isinstance(e0, dict):
-            return e0.get("values") or e0.get("embedding") or e0
-        return e0
+        return e0.get("values") or e0.get("embedding") or e0
     raise ValueError(f"Unexpected embedding response type: {type(resp)}")
 
 def embed_one(text: str) -> List[float]:
-    if not text or not text.strip():
-        return []
+    if not text.strip(): return []
     try:
         r = genai.embed_content(model="models/text-embedding-004", content=text)
-    except Exception:
+    except:
         r = genai.embed_content(model="text-embedding-004", content=text)
     return _extract_embedding(r)
 
 def embed_texts(texts: List[str]) -> List[List[float]]:
-    clean = [t for t in texts if t and t.strip()]
-    return [embed_one(t) for t in clean]
+    return [embed_one(t) for t in texts if t.strip()]
 
-# ========================== Chat model selection ===================================
-def _list_chat_models() -> set[str]:
-    names = set()
-    for m in genai.list_models():
-        methods = getattr(m, "supported_generation_methods", []) or getattr(m, "generation_methods", [])
-        if methods and ("generateContent" in methods or "generate_content" in methods):
-            names.add(m.name)
-    return names
-
-def pick_chat_model():
-    preference = [
-        "models/gemini-1.5-flash",
-        "gemini-1.5-flash",
-        "models/gemini-1.5-flash-8b",
-        "gemini-1.5-flash-8b",
-        "models/gemini-1.0-pro",
-        "gemini-1.0-pro",
-    ]
-    available = _list_chat_models()
-    for cand in preference:
-        if cand in available:
-            return genai.GenerativeModel(cand)
-    if available:
-        return genai.GenerativeModel(sorted(available)[0])
-    raise RuntimeError("No Gemini chat models available for this API key.")
-
-# ============================== Visual embeddings (CLIP) ============================
 @st.cache_resource(show_spinner=False)
 def get_clip_model():
     from sentence_transformers import SentenceTransformer
@@ -149,12 +106,33 @@ def embed_text_mm(text: str) -> List[float]:
     vec = model.encode([text], convert_to_numpy=True, normalize_embeddings=True)[0]
     return vec.astype(np.float32).tolist()
 
-# ========================== Classic RAG utilities ==================================
-def chunk_transcript(items: List[Tuple[str, str]], max_chars: int = 600) -> List[Tuple[str, str]]:
+# =================== Chat Model ====================
+def pick_chat_model():
+    try:
+        # Fetch all models
+        models = genai.list_models()
+        
+        # Filter to generative chat models only
+        available = [
+            m.name for m in models
+            if "generateContent" in m.supported_generation_methods
+        ]
+        
+        # Sort by latest model name (e.g. gemini-1.5-pro > gemini-pro)
+        if available:
+            latest = sorted(available, reverse=True)[0]
+            return genai.GenerativeModel(model_name=latest)
+        else:
+            raise RuntimeError("No supported Gemini model found in your API access.")
+    
+    except Exception as e:
+        raise RuntimeError(f"Failed to fetch Gemini models: {e}")
+
+# =================== Retrieval Utils ====================
+def chunk_transcript(items: List[Tuple[str, str]], max_chars=600):
     chunks, buf, anchor, count = [], [], None, 0
     for ts, txt in items:
-        if anchor is None:
-            anchor = ts
+        if anchor is None: anchor = ts
         if count + len(txt) + 1 > max_chars and buf:
             chunks.append((anchor, " ".join(buf).strip()))
             buf, anchor, count = [], ts, 0
@@ -170,198 +148,134 @@ def cosine(u: List[float], v: List[float]) -> float:
     return dot/(nu*nv)
 
 def retrieve(qv: List[float], embs: List[List[float]], top_k: int = 4):
-    scored = sorted(((i,cosine(qv,e)) for i,e in enumerate(embs) if e), key=lambda x:x[1], reverse=True)
-    return [i for i,_ in scored[:top_k]]
+    return [i for i,_ in sorted(((i,cosine(qv,e)) for i,e in enumerate(embs) if e), key=lambda x:x[1], reverse=True)[:top_k]]
 
-# -------------- timestamp helpers + frame matching ---------------------------------
 _TS_RE = re.compile(r"^(?:(\d+):)?([0-5]?\d):([0-5]?\d)$")
-
 def ts_to_seconds(ts: str) -> float:
-    ts = ts.strip()
-    m = _TS_RE.match(ts)
+    m = _TS_RE.match(ts.strip())
     if not m: return 0.0
-    h = int(m.group(1) or 0)
-    mm = int(m.group(2) or 0)
-    ss = int(m.group(3) or 0)
-    return float(h*3600+mm*60+ss)
+    h, m_, s = int(m.group(1) or 0), int(m.group(2)), int(m.group(3))
+    return h*3600 + m_*60 + s
 
 def nearest_frame_for_ts(ts: str, frames: list[tuple[str,str]]) -> tuple[str,str] | None:
-    if not frames: return None
     target = ts_to_seconds(ts)
-    best, best_delta = None, 1e9
-    for fts,p in frames:
-        delta = abs(ts_to_seconds(fts)-target)
-        if delta<best_delta:
-            best_delta=delta; best=(fts,p)
-    return best
+    return min(frames, key=lambda x: abs(ts_to_seconds(x[0]) - target), default=None)
 
-# =========================== Visual index builder ===================================
-def build_visual_index_from_video(video_path: str, every_sec: float = 2.0):
-    frames = extract_frames(video_path, outdir="frames", every_sec=every_sec, max_frames=240)
-    if not frames:
-        st.warning("Could not extract frames from the video."); return
-    embs = []
-    with st.spinner(f"Embedding {len(frames)} frames with CLIP..."):
-        for _,p in frames: embs.append(embed_image_file(p))
-    st.session_state.vis_frames=frames
-    st.session_state.vis_embs=embs
-    st.toast(f"Indexed {len(frames)} visual frames.",icon="✅")
+def build_visual_index_from_video(video_path: str, every_sec=2.0):
+    with st.spinner("Extracting key frames and computing image embeddings..."):
+        frames = extract_frames(video_path, outdir="frames", every_sec=every_sec, max_frames=240)
+        embs = [embed_image_file(p) for _,p in frames]
+        st.session_state.vis_frames = frames
+        st.session_state.vis_embs = embs
 
-# =============================== App state =========================================
-if "idx_chunks" not in st.session_state:
-    st.session_state.idx_chunks = []          # [(ts, text)]
-    st.session_state.idx_embs = []            # [vector]
-    st.session_state.source = ""
+# =================== App State ====================
+for key in ["idx_chunks", "idx_embs", "vis_frames", "vis_embs", "source"]:
+    if key not in st.session_state:
+        st.session_state[key] = [] if key != "source" else ""
 
-if "vis_frames" not in st.session_state:
-    st.session_state.vis_frames = []          # [(ts, img_path)]
-    st.session_state.vis_embs = []            # [vector]
-
-# ================================== UI Tabs ========================================
-yt_tab, upload_tab = st.tabs(["🔗 YouTube link", "📤 Upload (AssemblyAI)"])
+# =================== Tabs: YouTube / Upload ====================
+yt_tab, upload_tab = st.tabs(["YouTube link", "Upload (AssemblyAI)"])
 
 with yt_tab:
-    yt_url = st.text_input("YouTube URL", placeholder="https://www.youtube.com/watch?v=...")
-    cols = st.columns([1,1,2,2])
-    with cols[0]:
-        go = st.button("Fetch captions", disabled=not yt_url)
-    with cols[1]:
-        dl = st.button("Download & index visuals", disabled=not yt_url)
-
-    if go:
+    yt_url = st.text_input("YouTube URL")
+    if st.button("Fetch captions") and yt_url:
         try:
-            vid = parse_video_id(yt_url)
-        except ValueError as e:
-            st.error(str(e)); st.stop()
-
-        with st.spinner("Fetching captions..."):
-            items = fetch_transcript_for_video(vid)  # [(ts, text)] or []
-        if not items:
-            st.warning("No captions found or access blocked. Use the Upload tab to transcribe with AssemblyAI.")
-        else:
-            with st.spinner("Chunking + embedding..."):
+            with st.spinner("Fetching YouTube transcript and embedding..."):
+                vid = parse_video_id(yt_url)
+                items = fetch_transcript_for_video(vid)
                 chunks = chunk_transcript(items)
-                texts = [c[1] for c in chunks]
+                texts = [t for _,t in chunks]
                 embs = embed_texts(texts)
                 st.session_state.idx_chunks = chunks
                 st.session_state.idx_embs = embs
                 st.session_state.source = f"YouTube:{vid}"
-            st.success(f"Indexed {len(chunks)} chunks from captions.")
-
-    if dl:
-        with st.spinner("Downloading MP4 (no cookies)..."):
-            vpath = try_download_youtube_mp4(yt_url)
-        if not vpath:
-            st.error("Could not download video (network/corporate policy). Upload the file instead.")
-        else:
-            build_visual_index_from_video(vpath, every_sec=2.0)
+        except Exception as e:
+            st.error(str(e))
+    if st.button("Index visuals"):
+        path = try_download_youtube_mp4(yt_url)
+        if path:
+            build_visual_index_from_video(path)
 
 with upload_tab:
-    st.write("Upload an **audio/video** file (mp3, wav, m4a, mp4, mkv, mov). It will be transcribed by AssemblyAI.")
-    up = st.file_uploader("Choose file", type=["mp3", "wav", "m4a", "mp4", "mkv", "mov"])
-    if st.button("Transcribe with AssemblyAI", disabled=not up):
+    file = st.file_uploader("Choose audio/video file")
+    if st.button("Transcribe") and file:
+        path = f"uploads/{file.name}"
         os.makedirs("uploads", exist_ok=True)
-        path = os.path.join("uploads", up.name)
-        with open(path, "wb") as f: f.write(up.read())
-
-        if not has_audio(path):
-            st.warning("No audio detected. Proceeding with visual indexing only.")
-            build_visual_index_from_video(path, every_sec=2.0)
-            st.session_state.idx_chunks=[]
-            st.session_state.idx_embs=[]
-            st.session_state.source = f"Upload:{up.name} (silent)"
-        else:
-            if not os.getenv("ASSEMBLYAI_API_KEY", ""):
-                st.error("ASSEMBLYAI_API_KEY missing in .env"); st.stop()
+        with open(path, "wb") as f: f.write(file.read())
+        if has_audio(path):
             with st.spinner("Transcribing with AssemblyAI..."):
                 items = transcribe_with_assemblyai(path)
-            with st.spinner("Chunking + embedding..."):
                 chunks = chunk_transcript(items)
-                texts = [c[1] for c in chunks]
+                texts = [t for _,t in chunks]
                 embs = embed_texts(texts)
                 st.session_state.idx_chunks = chunks
                 st.session_state.idx_embs = embs
-                st.session_state.source = f"Upload:{up.name}"
-            st.success(f"Indexed {len(chunks)} chunks from uploaded file.")
-            build_visual_index_from_video(path, every_sec=2.0)
+                st.session_state.source = f"Upload:{file.name}"
+        else:
+            st.warning("No audio found. Using image-only analysis.")
+            st.session_state.idx_chunks = []
+            st.session_state.idx_embs = []
+            st.session_state.source = f"Upload:{file.name} (silent)"
+        build_visual_index_from_video(path)
 
-# Small status chips
-c1, c2, c3 = st.columns(3)
-c1.markdown(f'<span class="chunk-badge">Text chunks: {len(st.session_state.idx_chunks)}</span>', unsafe_allow_html=True)
-c2.markdown(f'<span class="chunk-badge">Frames indexed: {len(st.session_state.vis_frames)}</span>', unsafe_allow_html=True)
-c3.markdown(f'<span class="chunk-badge">Source: {st.session_state.source or "—"}</span>', unsafe_allow_html=True)
-
-# ============================== Q&A section ========================================
+# =================== QA Interface ====================
 st.divider()
 st.subheader("Ask a question")
 q = st.text_input("Your question")
 
 if q and (st.session_state.idx_embs or st.session_state.vis_embs):
-    with st.spinner("Searching + answering..."):
-        ctx=""
-        top_idx=[]
-        if st.session_state.idx_embs and st.session_state.idx_chunks:
-            qv = embed_one(q)
-            top_idx = retrieve(qv, st.session_state.idx_embs, top_k=4)
-            ctx = "\n\n".join(
-                f"[Chunk {i+1} @ {st.session_state.idx_chunks[i][0]}] {st.session_state.idx_chunks[i][1]}"
-                for i in top_idx
-            )
+    top_idx, ctx = [], ""
+    if st.session_state.idx_embs:
+        qv = embed_one(q)
+        top_idx = retrieve(qv, st.session_state.idx_embs)
+        ctx = "\n\n".join([f"[Chunk {i+1} @ {st.session_state.idx_chunks[i][0]}] {st.session_state.idx_chunks[i][1]}" for i in top_idx])
 
-        vis_hits: list[tuple[str,str]] = []
-        if st.session_state.vis_embs:
-            try:
-                qv_vis = embed_text_mm(q)
-                vis_ids = retrieve(qv_vis, st.session_state.vis_embs, top_k=4)
-                vis_hits.extend([st.session_state.vis_frames[i] for i in vis_ids])
-            except Exception:
-                pass
-        for i in top_idx:
-            ts = st.session_state.idx_chunks[i][0]
-            m = nearest_frame_for_ts(ts, st.session_state.vis_frames)
-            if m and m not in vis_hits:
-                vis_hits.append(m)
+    vis_hits = []
+    if st.session_state.vis_embs:
+        try:
+            qv_vis = embed_text_mm(q)
+            ids = retrieve(qv_vis, st.session_state.vis_embs)
+            vis_hits = [st.session_state.vis_frames[i] for i in ids]
+        except:
+            pass
+    for i in top_idx:
+        ts = st.session_state.idx_chunks[i][0]
+        frame = nearest_frame_for_ts(ts, st.session_state.vis_frames)
+        if frame and frame not in vis_hits:
+            vis_hits.append(frame)
 
     if vis_hits:
         st.caption("Visual evidence:")
-        show = vis_hits[:4]
-        cols = st.columns(len(show))
-        for col, (ts, imgp) in zip(cols, show):
-            col.image(imgp, caption=f"Visual Frame @ {ts}", use_container_width=True)
+        cols = st.columns(len(vis_hits))
+        for col, (ts, img) in zip(cols, vis_hits):
+            col.image(img, caption=f"Visual Frame @ {ts}", use_container_width=True)
 
-    # Build prompt
+    # Prompt setup
     if not ctx and vis_hits:
-    sys_prompt = (
-        "You are a visual story analyst. The user has provided visual frames from a video with no audio or captions. "
-        "Use the visual content from these frames to describe in detail what story is being shown. "
-        "Reconstruct the narrative with scene-by-scene breakdowns, emotions, actions, characters, and possible plot. "
-        "Be creative but stay grounded in what's visible in the images. "
-        "Respond with a full storyline, as if summarizing a silent short film."
-    )
+        sys_prompt = "Describe in detail what is happening in the visual frames, assuming this is a silent video. Create a storyline based on image sequence."
     else:
-        sys_prompt = (
-            "Answer using ONLY the provided transcript chunks and (optional) visual frames. "
-            "If the answer isn't present, say: 'I don’t know based on the transcript and video visuals.' "
-            "Cite chunk numbers and timestamps for text, and cite visual frame timestamps when used."
-        )
+        sys_prompt = "Answer using ONLY the provided transcript chunks and optional visual frames. Be specific."
 
     parts = [f"System instruction: {sys_prompt}"]
     if ctx: parts.append(f"Context:\n{ctx}")
-    if vis_hits:
-        for ts, imgp in vis_hits[:2]:
-            with open(imgp, "rb") as f:
-                data = f.read()
-            mime, _ = mimetypes.guess_type(imgp)
-            parts.append({"mime_type": mime or "image/jpeg", "data": data})
+    for ts, img in vis_hits[:2]:
+        with open(img, "rb") as f:
+            data = f.read()
+        mime, _ = mimetypes.guess_type(img)
+        parts.append({"mime_type": mime or "image/jpeg", "data": data})
     parts.append(f"Question: {q}")
 
     model = pick_chat_model()
-    resp = model.generate_content([{"role": "user", "parts": parts}])
-    st.write(resp.text.strip() if hasattr(resp, "text") and resp.text else str(resp))
+    try:
+        chat = model.start_chat(history=[])
+        resp = chat.send_message(parts)
+        st.write(resp.text.strip())
+    except Exception as e:
+        st.error(f"Gemini response error: {e}")
 
-    text_evidence = ", ".join(f"Chunk {i+1} @ {st.session_state.idx_chunks[i][0]}" for i in top_idx) if top_idx else "None"
-    vis_evidence = ", ".join(f"Visual Frame @ {ts}" for ts, _ in vis_hits) if vis_hits else "None"
-    st.markdown(f"**Evidence**  \nText: {text_evidence}  \nVisual: {vis_evidence}")
+    st.markdown("**Evidence**  ")
+    st.markdown(f"Text: {', '.join(f'Chunk {i+1} @ {st.session_state.idx_chunks[i][0]}' for i in top_idx) or 'None'}")
+    st.markdown(f"Visual: {', '.join(f'Visual Frame @ {ts}' for ts,_ in vis_hits) or 'None'}")
 
 elif q:
-    st.info("Build an index first (YouTube captions or Upload).")
+    st.info("Please index the video first using YouTube link or Upload.")
