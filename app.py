@@ -1,11 +1,3 @@
-
-# app.py — Multi-modal YouTube/Upload QA with text + visual evidence
-# - Text embeddings: Google text-embedding-004
-# - Visual embeddings: CLIP (sentence-transformers "clip-ViT-B-32")
-# - Transcription fallback: AssemblyAI
-# - Screenshot preview for each retrieved chunk timestamp
-# - Enhanced: Handles silent videos with image-only storytelling
-
 from __future__ import annotations
 
 import os, math, socket, mimetypes, re
@@ -39,18 +31,56 @@ if not GOOGLE_API_KEY:
     st.stop()
 genai.configure(api_key=GOOGLE_API_KEY)
 
-st.set_page_config(page_title="YouTube Chat (Gemini)", page_icon="📻", layout="wide")
+st.set_page_config(page_title="🎬 YouTube Gemini Chat", page_icon="🎥", layout="wide")
 
+# Dark theme and styling overrides
 st.markdown("""
-<style>
-.app-title { font-size: 28px; font-weight: 700; margin-bottom: 2px; }
-.app-sub   { color:#666; margin-bottom: 18px; }
-.chunk-badge { background:#eef2ff; color:#334155; padding:2px 8px; border-radius:999px; font-size:12px; margin-right:6px;}
-</style>
+    <style>
+    body, html, .main, .block-container {
+        background-color: #121212;
+        color: #e0e0e0;
+    }
+    .stButton>button {
+        background: linear-gradient(90deg, #7b4397 0%, #dc2430 100%);
+        color: white;
+        border-radius: 8px;
+        padding: 10px 16px;
+        font-weight: 600;
+    }
+    .stTextInput>div>div>input, .stTextArea textarea {
+        background-color: #1e1e1e;
+        color: #e0e0e0;
+    }
+    .stTabs [data-baseweb="tab"] {
+        background-color: #1e1e1e;
+        color: #e0e0e0;
+        border-radius: 6px;
+        padding: 10px;
+        margin-right: 8px;
+    }
+    .app-title {
+        font-size: 34px;
+        font-weight: bold;
+        margin-bottom: 4px;
+        color: #f06292;
+    }
+    .app-sub {
+        font-size: 16px;
+        color: #aaa;
+        margin-bottom: 20px;
+    }
+    .chunk-badge {
+        background: #2d2d2d;
+        color: #bb86fc;
+        padding: 4px 10px;
+        border-radius: 999px;
+        font-size: 13px;
+    }
+    </style>
 """, unsafe_allow_html=True)
 
-st.markdown('<div class="app-title">📻 Chat with YouTube Video</div>', unsafe_allow_html=True)
-st.markdown('<div class="app-sub">Use YouTube captions when available. Otherwise upload audio/video and we’ll transcribe with AssemblyAI. Supports screenshots as visual evidence.</div>', unsafe_allow_html=True)
+st.markdown('<div class="app-title">🎬 Chat with YouTube Video</div>', unsafe_allow_html=True)
+st.markdown('<div class="app-sub">Upload a video or paste a YouTube link. Transcribe, visualize, and chat using Google Gemini + image AI ✨</div>', unsafe_allow_html=True)
 
 # ====================== Helpers =====================
 def has_audio(file_path: str) -> bool:
@@ -109,22 +139,9 @@ def embed_text_mm(text: str) -> List[float]:
 # =================== Chat Model ====================
 def pick_chat_model():
     try:
-        # Fetch all models
         models = genai.list_models()
-        
-        # Filter to generative chat models only
-        available = [
-            m.name for m in models
-            if "generateContent" in m.supported_generation_methods
-        ]
-        
-        # Sort by latest model name (e.g. gemini-1.5-pro > gemini-pro)
-        if available:
-            latest = sorted(available, reverse=True)[0]
-            return genai.GenerativeModel(model_name=latest)
-        else:
-            raise RuntimeError("No supported Gemini model found in your API access.")
-    
+        available = [m.name for m in models if "generateContent" in m.supported_generation_methods]
+        return genai.GenerativeModel(model_name=sorted(available, reverse=True)[0]) if available else RuntimeError("No Gemini model found")
     except Exception as e:
         raise RuntimeError(f"Failed to fetch Gemini models: {e}")
 
@@ -174,11 +191,11 @@ for key in ["idx_chunks", "idx_embs", "vis_frames", "vis_embs", "source"]:
         st.session_state[key] = [] if key != "source" else ""
 
 # =================== Tabs: YouTube / Upload ====================
-yt_tab, upload_tab = st.tabs(["YouTube link", "Upload (AssemblyAI)"])
+yt_tab, upload_tab = st.tabs(["🔗 YouTube", "📁 Upload"])
 
 with yt_tab:
-    yt_url = st.text_input("YouTube URL")
-    if st.button("Fetch captions") and yt_url:
+    yt_url = st.text_input("Paste YouTube URL")
+    if st.button("📜 Fetch captions") and yt_url:
         try:
             with st.spinner("Fetching YouTube transcript and embedding..."):
                 vid = parse_video_id(yt_url)
@@ -191,14 +208,14 @@ with yt_tab:
                 st.session_state.source = f"YouTube:{vid}"
         except Exception as e:
             st.error(str(e))
-    if st.button("Index visuals"):
+    if st.button("🖼️ Index visuals"):
         path = try_download_youtube_mp4(yt_url)
         if path:
             build_visual_index_from_video(path)
 
 with upload_tab:
-    file = st.file_uploader("Choose audio/video file")
-    if st.button("Transcribe") and file:
+    file = st.file_uploader("Upload audio/video file")
+    if st.button("📝 Transcribe") and file:
         path = f"uploads/{file.name}"
         os.makedirs("uploads", exist_ok=True)
         with open(path, "wb") as f: f.write(file.read())
@@ -220,8 +237,8 @@ with upload_tab:
 
 # =================== QA Interface ====================
 st.divider()
-st.subheader("Ask a question")
-q = st.text_input("Your question")
+st.subheader("Ask me anything 🎙️")
+q = st.text_input("Type your question here")
 
 if q and (st.session_state.idx_embs or st.session_state.vis_embs):
     top_idx, ctx = [], ""
@@ -248,14 +265,9 @@ if q and (st.session_state.idx_embs or st.session_state.vis_embs):
         st.caption("Visual evidence:")
         cols = st.columns(len(vis_hits))
         for col, (ts, img) in zip(cols, vis_hits):
-            col.image(img, caption=f"Visual Frame @ {ts}", use_container_width=True)
+            col.image(img, caption=f"Frame @ {ts}", use_container_width=True)
 
-    # Prompt setup
-    if not ctx and vis_hits:
-        sys_prompt = "Describe in detail what is happening in the visual frames, assuming this is a silent video. Create a storyline based on image sequence."
-    else:
-        sys_prompt = "Answer using ONLY the provided transcript chunks and optional visual frames. Be specific."
-
+    sys_prompt = "Describe in detail what is happening in the visual frames, assuming this is a silent video." if not ctx else "Answer using ONLY the transcript and visuals provided."
     parts = [f"System instruction: {sys_prompt}"]
     if ctx: parts.append(f"Context:\n{ctx}")
     for ts, img in vis_hits[:2]:
@@ -273,9 +285,9 @@ if q and (st.session_state.idx_embs or st.session_state.vis_embs):
     except Exception as e:
         st.error(f"Gemini response error: {e}")
 
-    st.markdown("**Evidence**  ")
+    st.markdown("**Evidence Used:**")
     st.markdown(f"Text: {', '.join(f'Chunk {i+1} @ {st.session_state.idx_chunks[i][0]}' for i in top_idx) or 'None'}")
-    st.markdown(f"Visual: {', '.join(f'Visual Frame @ {ts}' for ts,_ in vis_hits) or 'None'}")
+    st.markdown(f"Visual: {', '.join(f'Frame @ {ts}' for ts,_ in vis_hits) or 'None'}")
 
 elif q:
-    st.info("Please index the video first using YouTube link or Upload.")
+    st.info("Please index the video first using YouTube link or Upload tab.")
